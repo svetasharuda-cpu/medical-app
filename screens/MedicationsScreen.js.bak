@@ -1,0 +1,326 @@
+import React, { useState, useCallback } from 'react';
+import {
+  View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
+  FlatList, Modal, TextInput, Alert, ScrollView, Image, Switch,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import { useFocusEffect } from '@react-navigation/native';
+import {
+  scheduleNotificationsForMed, cancelNotificationsForMed,
+  scheduleEndOfCourseReminder, cancelEndOfCourseReminder,
+  requestPermissions,
+} from '../utils/notifications';
+
+const STATUS_CONFIG = {
+  taken:  { color: '#2E7D32', bg: '#E8F5E9', label: '✅ Прийнято' },
+  soon:   { color: '#E65100', bg: '#FFF3E0', label: '⏰ Скоро' },
+  missed: { color: '#C62828', bg: '#FFEBEE', label: '❌ Пропущено' },
+};
+
+const STORAGE_KEY = 'medications_v1';
+const EMPTY_FORM = {
+  name: '', dosage: '', times: [], startDate: '', endDate: '',
+  status: 'soon', remindersEnabled: true,
+};
+
+function todayStr() {
+  return new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '.').slice(0, 10);
+}
+
+export default function MedicationsScreen({ navigation }) {
+  const [meds, setMeds] = useState([]);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [receiptImage, setReceiptImage] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [newTime, setNewTime] = useState('');
+
+  useFocusEffect(useCallback(() => {
+    AsyncStorage.getItem(STORAGE_KEY).then(d => { if (d) setMeds(JSON.parse(d)); });
+  }, []));
+
+  const save = async (updated) => {
+    setMeds(updated);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  };
+
+  const openAdd = async () => {
+    await requestPermissions();
+    setForm({ ...EMPTY_FORM, startDate: todayStr() });
+    setReceiptImage(null);
+    setNewTime('');
+    setModalVisible(true);
+  };
+
+  const addTime = () => {
+    const t = newTime.trim();
+    if (!/^\d{1,2}:\d{2}$/.test(t)) { Alert.alert('Формат часу: ГГ:ХХ, наприклад 08:00'); return; }
+    const [h, m] = t.split(':').map(Number);
+    if (h > 23 || m > 59) { Alert.alert('Невірний час'); return; }
+    const padded = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    if (form.times.includes(padded)) { Alert.alert('Цей час вже додано'); return; }
+    setForm(f => ({ ...f, times: [...f.times, padded].sort() }));
+    setNewTime('');
+  };
+
+  const removeTime = (t) => setForm(f => ({ ...f, times: f.times.filter(x => x !== t) }));
+
+  const addMed = async () => {
+    if (!form.name.trim()) { Alert.alert('Вкажіть назву препарату'); return; }
+    const newMed = { id: Date.now().toString(), ...form, image: receiptImage };
+    const updated = [...meds, newMed];
+    await save(updated);
+    if (form.remindersEnabled && form.times.length > 0) {
+      await scheduleNotificationsForMed(newMed);
+    }
+    await scheduleEndOfCourseReminder(newMed);
+    setModalVisible(false);
+  };
+
+  const deleteMed = (id) => {
+    Alert.alert('Видалити?', 'Видалити цей препарат і всі нагадування?', [
+      { text: 'Скасувати', style: 'cancel' },
+      {
+        text: 'Видалити', style: 'destructive', onPress: async () => {
+          await cancelNotificationsForMed(id);
+          await cancelEndOfCourseReminder(id);
+          await save(meds.filter(m => m.id !== id));
+        }
+      },
+    ]);
+  };
+
+  const cycleStatus = async (id) => {
+    const order = ['soon', 'taken', 'missed'];
+    const updated = meds.map(m => {
+      if (m.id !== id) return m;
+      return { ...m, status: order[(order.indexOf(m.status) + 1) % order.length] };
+    });
+    await save(updated);
+  };
+
+  const pickImage = () => {
+    Alert.alert('Фото рецепту', 'Оберіть джерело', [
+      {
+        text: '📷 Камера', onPress: async () => {
+          await ImagePicker.requestCameraPermissionsAsync();
+          const r = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+          if (!r.canceled) setReceiptImage(r.assets[0].uri);
+        }
+      },
+      {
+        text: '🖼 Галерея', onPress: async () => {
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
+          const r = await ImagePicker.launchImageLibraryAsync({ quality: 0.7 });
+          if (!r.canceled) setReceiptImage(r.assets[0].uri);
+        }
+      },
+      { text: 'Скасувати', style: 'cancel' },
+    ]);
+  };
+
+  const renderMed = ({ item }) => {
+    const cfg = STATUS_CONFIG[item.status] || STATUS_CONFIG.soon;
+    const hasTimes = item.times && item.times.length > 0;
+    return (
+      <TouchableOpacity
+        style={[styles.card, { backgroundColor: cfg.bg }]}
+        onPress={() => cycleStatus(item.id)}
+        onLongPress={() => deleteMed(item.id)}
+        activeOpacity={0.8}
+      >
+        <View style={styles.cardLeft}>
+          <Text style={styles.medName}>{item.name}</Text>
+          {!!item.dosage && <Text style={styles.medDetail}>💊 {item.dosage}</Text>}
+          {hasTimes && (
+            <Text style={styles.medDetail}>🕐 {item.times.join('  •  ')}</Text>
+          )}
+          {(!!item.startDate || !!item.endDate) && (
+            <Text style={styles.medDetail}>
+              📅 {item.startDate || ''}
+              {item.endDate ? ` → ${item.endDate}` : ''}
+            </Text>
+          )}
+          {item.remindersEnabled && hasTimes && (
+            <Text style={styles.reminderBadge}>🔔 Нагадування увімкнено</Text>
+          )}
+          <Text style={[styles.statusBadge, { color: cfg.color }]}>{cfg.label}</Text>
+        </View>
+        {item.image && <Image source={{ uri: item.image }} style={styles.thumb} />}
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.headerRow}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <Text style={styles.backText}>◀ Назад</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>Мої ліки</Text>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.scheduleBtn} onPress={() => navigation.navigate('Schedule')}>
+            <Text style={styles.scheduleBtnText}>📅</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.summaryBtn} onPress={() => navigation.navigate('Summary')}>
+            <Text style={styles.scheduleBtnText}>📋</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.addBtn} onPress={openAdd}>
+            <Text style={styles.addBtnText}>+</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {meds.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyText}>Препаратів ще немає.{'\n'}Натисніть «+» щоб додати.</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={meds}
+          keyExtractor={i => i.id}
+          renderItem={renderMed}
+          contentContainerStyle={{ padding: 16, gap: 12 }}
+        />
+      )}
+      <Text style={styles.hint}>Натисніть — змінити статус  •  Утримуйте — видалити  •  📅 — графік</Text>
+
+      {/* ADD MODAL */}
+      <Modal visible={modalVisible} transparent animationType="slide">
+        <View style={styles.overlay}>
+          <ScrollView contentContainerStyle={styles.modalBox} keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalTitle}>Новий препарат</Text>
+
+            <Text style={styles.label}>Назва *</Text>
+            <TextInput style={styles.input} value={form.name} onChangeText={t => setForm(f => ({ ...f, name: t }))} placeholder="Наприклад: Аспірин" fontSize={18} />
+
+            <Text style={styles.label}>Дозування</Text>
+            <TextInput style={styles.input} value={form.dosage} onChangeText={t => setForm(f => ({ ...f, dosage: t }))} placeholder="Наприклад: 100 мг" fontSize={18} />
+
+            {/* Times */}
+            <Text style={styles.label}>Час прийому</Text>
+            <View style={styles.timeRow}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                value={newTime}
+                onChangeText={setNewTime}
+                placeholder="08:00"
+                keyboardType="numbers-and-punctuation"
+                fontSize={18}
+                onSubmitEditing={addTime}
+              />
+              <TouchableOpacity style={styles.addTimeBtn} onPress={addTime}>
+                <Text style={styles.addTimeBtnText}>+ Додати</Text>
+              </TouchableOpacity>
+            </View>
+            {form.times.length > 0 && (
+              <View style={styles.timePills}>
+                {form.times.map(t => (
+                  <TouchableOpacity key={t} style={styles.timePill} onPress={() => removeTime(t)}>
+                    <Text style={styles.timePillText}>{t}  ✕</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Dates */}
+            <Text style={styles.label}>Початок курсу</Text>
+            <TextInput style={styles.input} value={form.startDate} onChangeText={t => setForm(f => ({ ...f, startDate: t }))} placeholder="ДД.ММ.РРРР" keyboardType="numbers-and-punctuation" fontSize={18} />
+
+            <Text style={styles.label}>Кінець курсу (необов'язково)</Text>
+            <TextInput style={styles.input} value={form.endDate} onChangeText={t => setForm(f => ({ ...f, endDate: t }))} placeholder="ДД.ММ.РРРР" keyboardType="numbers-and-punctuation" fontSize={18} />
+
+            {/* Reminders */}
+            <View style={styles.reminderRow}>
+              <Text style={styles.reminderLabel}>🔔 Нагадування</Text>
+              <Switch
+                value={form.remindersEnabled}
+                onValueChange={v => setForm(f => ({ ...f, remindersEnabled: v }))}
+                trackColor={{ false: '#ccc', true: '#1565C0' }}
+                thumbColor={form.remindersEnabled ? '#fff' : '#f4f3f4'}
+              />
+            </View>
+            {form.remindersEnabled && form.times.length === 0 && (
+              <Text style={styles.reminderNote}>Додайте час прийому, щоб нагадування працювали</Text>
+            )}
+
+            {/* Status */}
+            <Text style={styles.label}>Поточний статус</Text>
+            <View style={styles.statusRow}>
+              {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+                <TouchableOpacity
+                  key={key}
+                  style={[styles.statusChip, form.status === key && { backgroundColor: cfg.color }]}
+                  onPress={() => setForm(f => ({ ...f, status: key }))}
+                >
+                  <Text style={[styles.statusChipText, form.status === key && { color: '#fff' }]}>{cfg.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Photo */}
+            <TouchableOpacity style={styles.photoBtn} onPress={pickImage}>
+              <Text style={styles.photoBtnText}>📷 {receiptImage ? 'Фото рецепту додано ✓' : 'Додати фото рецепту'}</Text>
+            </TouchableOpacity>
+            {receiptImage && <Image source={{ uri: receiptImage }} style={styles.previewImg} />}
+
+            <TouchableOpacity style={styles.saveBtn} onPress={addMed}>
+              <Text style={styles.saveBtnText}>Зберегти</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalVisible(false)}>
+              <Text style={styles.cancelBtnText}>Скасувати</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#F0F4FF' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', padding: 16, paddingTop: 24, gap: 8 },
+  backBtn: { backgroundColor: '#1565C0', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44 },
+  backText: { color: '#fff', fontSize: 17, fontWeight: '600' },
+  title: { flex: 1, fontSize: 24, fontWeight: '700', color: '#1A1A2E', textAlign: 'center' },
+  headerRight: { flexDirection: 'row', gap: 8 },
+  scheduleBtn: { backgroundColor: '#6A1B9A', borderRadius: 10, width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  summaryBtn:  { backgroundColor: '#00838F', borderRadius: 10, width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  scheduleBtnText: { fontSize: 20 },
+  addBtn: { backgroundColor: '#2E7D32', borderRadius: 10, width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  addBtnText: { color: '#fff', fontSize: 26, fontWeight: '400', lineHeight: 28 },
+  card: { borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'flex-start', elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
+  cardLeft: { flex: 1 },
+  medName: { fontSize: 20, fontWeight: '700', color: '#1A1A2E' },
+  medDetail: { fontSize: 16, color: '#555', marginTop: 3 },
+  reminderBadge: { fontSize: 14, color: '#1565C0', marginTop: 4 },
+  statusBadge: { fontSize: 17, fontWeight: '600', marginTop: 6 },
+  thumb: { width: 64, height: 64, borderRadius: 10, marginLeft: 12 },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  emptyText: { fontSize: 20, color: '#555', textAlign: 'center', lineHeight: 32 },
+  hint: { textAlign: 'center', fontSize: 13, color: '#888', padding: 10 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalBox: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  modalTitle: { fontSize: 26, fontWeight: '700', color: '#1A1A2E', marginBottom: 16 },
+  label: { fontSize: 17, color: '#555', marginBottom: 6, marginTop: 14 },
+  input: { borderWidth: 2, borderColor: '#1565C0', borderRadius: 12, padding: 14, fontSize: 18, backgroundColor: '#FAFAFA' },
+  timeRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  addTimeBtn: { backgroundColor: '#1565C0', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, justifyContent: 'center' },
+  addTimeBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  timePills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  timePill: { backgroundColor: '#1565C0', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
+  timePillText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  reminderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 18, backgroundColor: '#F0F4FF', borderRadius: 12, padding: 14 },
+  reminderLabel: { fontSize: 18, color: '#1A1A2E', fontWeight: '600' },
+  reminderNote: { fontSize: 14, color: '#E65100', marginTop: 6 },
+  statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  statusChip: { borderWidth: 2, borderColor: '#ccc', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
+  statusChipText: { fontSize: 16, color: '#333' },
+  photoBtn: { marginTop: 20, backgroundColor: '#E3F2FD', borderRadius: 12, padding: 16, alignItems: 'center' },
+  photoBtnText: { fontSize: 18, color: '#1565C0', fontWeight: '600' },
+  previewImg: { width: '100%', height: 160, borderRadius: 12, marginTop: 12 },
+  saveBtn: { marginTop: 20, backgroundColor: '#1565C0', borderRadius: 12, padding: 18, alignItems: 'center' },
+  saveBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  cancelBtn: { marginTop: 10, borderRadius: 12, padding: 16, alignItems: 'center' },
+  cancelBtnText: { color: '#888', fontSize: 18 },
+});
