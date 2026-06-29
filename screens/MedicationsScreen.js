@@ -131,6 +131,7 @@ export default function MedicationsScreen({ navigation }) {
 
   const analyzeReceipt = async (contentBlock) => {
     const key = apiKey.trim();
+    console.log('[AI] analyzeReceipt called, key present:', !!key, 'block type:', contentBlock?.type);
     if (!key) { setShowApiKeyInput(true); Alert.alert(t.apiKeyPrompt); return; }
     setAnalyzing(true);
     setAiFilled(false);
@@ -147,6 +148,7 @@ export default function MedicationsScreen({ navigation }) {
         '- If a field cannot be determined, use an empty string (or empty array for times)\n' +
         'Return ONLY the JSON object, nothing else.';
 
+      console.log('[AI] data length:', contentBlock?.source?.data?.length, 'media_type:', contentBlock?.source?.media_type);
       if (!contentBlock?.source?.data) {
         throw new Error('Image data could not be read — please try again');
       }
@@ -162,6 +164,7 @@ export default function MedicationsScreen({ navigation }) {
       const apiUrl = Platform.OS === 'web'
         ? '/api/anthropic'
         : 'https://api.anthropic.com/v1/messages';
+      console.log('[AI] sending to', apiUrl, '— model: claude-haiku-4-5-20251001, isPdf:', isPdfBlock);
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: reqHeaders,
@@ -175,14 +178,16 @@ export default function MedicationsScreen({ navigation }) {
         }),
       });
 
+      console.log('[AI] response status:', response.status);
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         const msg = (err && err.error && err.error.message) || ('HTTP ' + response.status);
-        console.error('Anthropic API error:', JSON.stringify(err));
+        console.error('[AI] Anthropic error body:', JSON.stringify(err));
         throw new Error(msg);
       }
 
       const data = await response.json();
+      console.log('[AI] response ok, content[0]:', JSON.stringify(data?.content?.[0])?.slice(0, 120));
       const raw = (data && data.content && data.content[0] && data.content[0].text) || '';
 
       // Strip markdown code fences if Claude wrapped the JSON
@@ -206,6 +211,7 @@ export default function MedicationsScreen({ navigation }) {
       }));
       setAiFilled(true);
     } catch (e) {
+      console.error('[AI] caught error:', e?.message, e);
       Alert.alert(t.aiError, t.aiErrorMsg + e.message);
     } finally {
       setAnalyzing(false);
@@ -217,10 +223,12 @@ export default function MedicationsScreen({ navigation }) {
   // only reliable way to keep the base64 payload under Vercel's 4.5 MB limit.
   const webCompressImage = (uri) =>
     new Promise((resolve, reject) => {
+      console.log('[AI] webCompressImage: loading uri', uri?.slice(0, 60));
       const img = document.createElement('img');
       img.onload = () => {
         const MAX = 1024;
         let w = img.naturalWidth, h = img.naturalHeight;
+        console.log('[AI] image natural size:', w, 'x', h);
         if (w > MAX || h > MAX) {
           if (w >= h) { h = Math.round((h * MAX) / w); w = MAX; }
           else { w = Math.round((w * MAX) / h); h = MAX; }
@@ -228,9 +236,11 @@ export default function MedicationsScreen({ navigation }) {
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', 0.7).split(',')[1]);
+        const b64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+        console.log('[AI] compressed to', w, 'x', h, '— base64 length:', b64?.length);
+        resolve(b64);
       };
-      img.onerror = reject;
+      img.onerror = (e) => { console.error('[AI] img load error', e); reject(e); };
       img.src = uri;
     });
 
