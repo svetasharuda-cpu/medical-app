@@ -2,6 +2,8 @@ module.exports = {
   globDirectory: 'dist/',
   globPatterns: ['**/*.{html,js,css,png,jpg,jpeg,svg,ico,json,woff,woff2}'],
   swDest: 'dist/sw.js',
+  skipWaiting: true,
+  clientsClaim: true,
   runtimeCaching: [
     {
       urlPattern: /\.(?:png|jpg|jpeg|svg|gif|ico)$/,
