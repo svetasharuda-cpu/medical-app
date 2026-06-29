@@ -166,7 +166,7 @@ export default function MedicationsScreen({ navigation }) {
         method: 'POST',
         headers: reqHeaders,
         body: JSON.stringify({
-          model: 'claude-opus-4-8',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 512,
           messages: [{
             role: 'user',
@@ -231,7 +231,7 @@ export default function MedicationsScreen({ navigation }) {
   const pickFromCamera = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) { Alert.alert(t.camPermission); return; }
-    const r = await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true });
+    const r = await ImagePicker.launchCameraAsync({ quality: 0.5, base64: true, maxWidth: 1024, maxHeight: 1024 });
     if (!r.canceled && r.assets && r.assets[0]) {
       const asset = r.assets[0];
       setReceiptImage(asset.uri);
@@ -243,7 +243,7 @@ export default function MedicationsScreen({ navigation }) {
   const pickFromGallery = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert(t.galleryPermission); return; }
-    const r = await ImagePicker.launchImageLibraryAsync({ quality: 0.7, base64: true });
+    const r = await ImagePicker.launchImageLibraryAsync({ quality: 0.5, base64: true, maxWidth: 1024, maxHeight: 1024 });
     if (!r.canceled && r.assets && r.assets[0]) {
       const asset = r.assets[0];
       setReceiptImage(asset.uri);

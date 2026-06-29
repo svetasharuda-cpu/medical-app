@@ -26,5 +26,8 @@ export default async function handler(req, res) {
   });
 
   const data = await upstream.json();
+  if (!upstream.ok) {
+    console.error('Anthropic rejected request:', upstream.status, JSON.stringify(data));
+  }
   res.status(upstream.status).json(data);
 }
