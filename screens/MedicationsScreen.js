@@ -212,21 +212,37 @@ export default function MedicationsScreen({ navigation }) {
     }
   };
 
-  const uriToBase64 = async (uri) => {
-    if (Platform.OS === 'web') {
-      const blob = await fetch(uri).then(r => r.blob());
-      return new Promise((resolve, reject) => {
+  // On web, canvas-resize to ≤1024px and re-encode as JPEG at 0.7 quality.
+  // maxWidth/maxHeight in ImagePicker are ignored by browsers, so this is the
+  // only reliable way to keep the base64 payload under Vercel's 4.5 MB limit.
+  const webCompressImage = (uri) =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1024;
+        let w = img.naturalWidth, h = img.naturalHeight;
+        if (w > MAX || h > MAX) {
+          if (w >= h) { h = Math.round((h * MAX) / w); w = MAX; }
+          else { w = Math.round((w * MAX) / h); h = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.7).split(',')[1]);
+      };
+      img.onerror = reject;
+      img.src = uri;
+    });
+
+  const webBlobToBase64 = (uri) =>
+    fetch(uri).then(r => r.blob()).then(blob =>
+      new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(',')[1]);
         reader.onerror = reject;
         reader.readAsDataURL(blob);
-      });
-    }
-    return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-  };
-
-  const supportedMime = (mime) =>
-    ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mime) ? mime : 'image/jpeg';
+      })
+    );
 
   const pickFromCamera = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -235,8 +251,10 @@ export default function MedicationsScreen({ navigation }) {
     if (!r.canceled && r.assets && r.assets[0]) {
       const asset = r.assets[0];
       setReceiptImage(asset.uri);
-      const data = asset.base64 || await uriToBase64(asset.uri);
-      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: supportedMime(asset.mimeType), data } });
+      const data = Platform.OS === 'web'
+        ? await webCompressImage(asset.uri)
+        : (asset.base64 || await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
+      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
     }
   };
 
@@ -247,8 +265,10 @@ export default function MedicationsScreen({ navigation }) {
     if (!r.canceled && r.assets && r.assets[0]) {
       const asset = r.assets[0];
       setReceiptImage(asset.uri);
-      const data = asset.base64 || await uriToBase64(asset.uri);
-      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: supportedMime(asset.mimeType), data } });
+      const data = Platform.OS === 'web'
+        ? await webCompressImage(asset.uri)
+        : (asset.base64 || await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
+      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
     }
   };
 
@@ -258,12 +278,17 @@ export default function MedicationsScreen({ navigation }) {
       if (result.canceled || !result.assets || !result.assets[0]) return;
       const asset = result.assets[0];
       const isPdf = asset.mimeType === 'application/pdf' || asset.name?.toLowerCase().endsWith('.pdf');
-      const base64 = await uriToBase64(asset.uri);
       if (isPdf) {
+        const base64 = Platform.OS === 'web'
+          ? await webBlobToBase64(asset.uri)
+          : await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
         await analyzeReceipt({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } });
       } else {
         setReceiptImage(asset.uri);
-        await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: supportedMime(asset.mimeType), data: base64 } });
+        const data = Platform.OS === 'web'
+          ? await webCompressImage(asset.uri)
+          : await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+        await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
       }
     } catch (e) {
       Alert.alert(t.aiError, t.fileError + e.message);
