@@ -203,6 +203,22 @@ export default function MedicationsScreen({ navigation }) {
     }
   };
 
+  const uriToBase64 = async (uri) => {
+    if (Platform.OS === 'web') {
+      const blob = await fetch(uri).then(r => r.blob());
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+    return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  };
+
+  const supportedMime = (mime) =>
+    ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mime) ? mime : 'image/jpeg';
+
   const pickFromCamera = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) { Alert.alert(t.camPermission); return; }
@@ -210,7 +226,8 @@ export default function MedicationsScreen({ navigation }) {
     if (!r.canceled && r.assets && r.assets[0]) {
       const asset = r.assets[0];
       setReceiptImage(asset.uri);
-      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: asset.base64 } });
+      const data = asset.base64 || await uriToBase64(asset.uri);
+      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: supportedMime(asset.mimeType), data } });
     }
   };
 
@@ -221,7 +238,8 @@ export default function MedicationsScreen({ navigation }) {
     if (!r.canceled && r.assets && r.assets[0]) {
       const asset = r.assets[0];
       setReceiptImage(asset.uri);
-      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: asset.base64 } });
+      const data = asset.base64 || await uriToBase64(asset.uri);
+      await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: supportedMime(asset.mimeType), data } });
     }
   };
 
@@ -230,13 +248,13 @@ export default function MedicationsScreen({ navigation }) {
       const result = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'image/*'], copyToCacheDirectory: true });
       if (result.canceled || !result.assets || !result.assets[0]) return;
       const asset = result.assets[0];
-      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
       const isPdf = asset.mimeType === 'application/pdf' || asset.name?.toLowerCase().endsWith('.pdf');
+      const base64 = await uriToBase64(asset.uri);
       if (isPdf) {
         await analyzeReceipt({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } });
       } else {
         setReceiptImage(asset.uri);
-        await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } });
+        await analyzeReceipt({ type: 'image', source: { type: 'base64', media_type: supportedMime(asset.mimeType), data: base64 } });
       }
     } catch (e) {
       Alert.alert(t.aiError, t.fileError + e.message);
