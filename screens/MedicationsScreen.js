@@ -217,7 +217,7 @@ export default function MedicationsScreen({ navigation }) {
   // only reliable way to keep the base64 payload under Vercel's 4.5 MB limit.
   const webCompressImage = (uri) =>
     new Promise((resolve, reject) => {
-      const img = new Image();
+      const img = document.createElement('img');
       img.onload = () => {
         const MAX = 1024;
         let w = img.naturalWidth, h = img.naturalHeight;
