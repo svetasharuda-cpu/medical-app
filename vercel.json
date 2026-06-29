@@ -1,7 +1,7 @@
 {
-  "buildCommand": "npx expo export -p web",
+  "buildCommand": "npx expo export -p web && npx workbox generateSW workbox-config.js",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|sw\\.js$).*)", "destination": "/index.html" }
   ]
 }
