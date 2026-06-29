@@ -147,17 +147,24 @@ export default function MedicationsScreen({ navigation }) {
         '- If a field cannot be determined, use an empty string (or empty array for times)\n' +
         'Return ONLY the JSON object, nothing else.';
 
+      if (!contentBlock?.source?.data) {
+        throw new Error('Image data could not be read — please try again');
+      }
+
+      const isPdfBlock = contentBlock.type === 'document';
+      const reqHeaders = {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+      };
+      if (isPdfBlock) reqHeaders['anthropic-beta'] = 'pdfs-2024-09-25';
+
       const apiUrl = Platform.OS === 'web'
         ? '/api/anthropic'
         : 'https://api.anthropic.com/v1/messages';
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': key,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'pdfs-2024-09-25',
-        },
+        headers: reqHeaders,
         body: JSON.stringify({
           model: 'claude-opus-4-8',
           max_tokens: 512,
@@ -170,7 +177,9 @@ export default function MedicationsScreen({ navigation }) {
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error((err && err.error && err.error.message) || ('HTTP ' + response.status));
+        const msg = (err && err.error && err.error.message) || ('HTTP ' + response.status);
+        console.error('Anthropic API error:', JSON.stringify(err));
+        throw new Error(msg);
       }
 
       const data = await response.json();
