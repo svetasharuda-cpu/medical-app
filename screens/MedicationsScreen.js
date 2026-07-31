@@ -164,12 +164,12 @@ export default function MedicationsScreen({ navigation }) {
       const apiUrl = Platform.OS === 'web'
         ? '/api/anthropic'
         : 'https://api.anthropic.com/v1/messages';
-      console.log('[AI] sending to', apiUrl, '— model: claude-haiku-4-5-20251001, isPdf:', isPdfBlock);
+      console.log('[AI] sending to', apiUrl, '— model: claude-sonnet-5, isPdf:', isPdfBlock);
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: reqHeaders,
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-sonnet-5',
           max_tokens: 512,
           messages: [{
             role: 'user',

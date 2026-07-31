@@ -11,13 +11,14 @@ npm start            # Start Expo dev server (scan QR with Expo Go)
 npm run android      # Open on Android emulator/device
 npm run ios          # Open on iOS simulator/device
 npm run web          # Open in browser
+npm run build:web    # expo export -p web, then generate the Workbox service worker into dist/
 ```
 
 No test runner or linter is configured — there are no `test` or `lint` scripts.
 
 ## Architecture
 
-**Expo SDK 56 / React Native 0.85** app with no backend — all data lives in `AsyncStorage`.
+**Expo SDK 56 / React Native 0.85** app. All user data lives in `AsyncStorage` — there is no app database or user backend. The only server-side code is a one-route Vercel proxy (`api/`) that exists solely to work around browser CORS when calling Anthropic from the web build.
 
 ### Navigation
 
@@ -53,7 +54,21 @@ Notification IDs are persisted in AsyncStorage under `notif_<medId>` and `notif_
 
 ### AI Prescription Scanning
 
-`MedicationsScreen` sends a base64-encoded image (camera, gallery, or file) to the Anthropic Messages API (`claude-opus-4-5`) to extract medication name, dosage, and schedule. The API key is entered by the user and stored in AsyncStorage under `'anthropic_api_key'`. Always check the versioned Expo docs before changing camera/file-picker code.
+`MedicationsScreen` sends a base64-encoded image or PDF (camera, gallery, or file) to the Anthropic Messages API (`claude-sonnet-5`) to extract medication name, dosage, and schedule as JSON. The API key is entered by the user and stored in AsyncStorage under `'anthropic_api_key'`; it's sent client-side as the `x-api-key` header on every request, never persisted server-side.
+
+- **Native (iOS/Android)**: calls `https://api.anthropic.com/v1/messages` directly.
+- **Web**: calls same-origin `/api/anthropic`, which `api/anthropic.js` (a Vercel serverless function, routed via `vercel.json`) forwards to the Anthropic API — a direct browser call would be blocked by CORS. The proxy only relays the `x-api-key`/`anthropic-beta` headers and body; it does not read or store the key.
+- **Web image handling**: `expo-image-picker`'s `maxWidth`/`maxHeight` are ignored by browsers, so `webCompressImage` in `MedicationsScreen` canvas-resizes to ≤1024px and re-encodes as JPEG (quality 0.7) before sending, to stay under Vercel's 4.5 MB request body limit. Uses `document.createElement('img')`, not `new Image()` (the latter breaks the web build).
+
+Always check the versioned Expo docs before changing camera/file-picker code.
+
+### Web / PWA deployment
+
+The web build is deployed to Vercel as a static PWA:
+- `public/index.html`, `public/manifest.json`, `public/icon-*.png` are the PWA shell served as-is.
+- `npm run build:web` runs `expo export -p web` then `workbox generateSW workbox-config.js`, which generates `dist/sw.js` (Workbox config: `skipWaiting` + `clientsClaim` so a new deploy takes over immediately; cache-first for images, stale-while-revalidate for JS/CSS).
+- `public/index.html` registers the service worker and force-reloads the page once a new worker activates, so users don't get stuck on a stale cached build after a deploy.
+- `vercel.json` sets `outputDirectory: dist` and rewrites all paths except `/api/*` and `/sw.js` to `index.html` (SPA routing).
 
 ### Data Storage Keys (AsyncStorage)
 
