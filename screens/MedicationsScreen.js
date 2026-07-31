@@ -25,6 +25,32 @@ const EMPTY_FORM = {
   status: 'soon', remindersEnabled: true,
 };
 
+// Extracts the first complete top-level JSON object, ignoring braces inside
+// string literals and any prose the model appends after the closing brace.
+function extractFirstJsonObject(text) {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 function todayStr() {
   return new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '.').slice(0, 10);
 }
@@ -192,10 +218,10 @@ export default function MedicationsScreen({ navigation }) {
 
       // Strip markdown code fences if Claude wrapped the JSON
       const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-      const jsonMatch = stripped.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('Could not parse AI response');
+      const jsonSlice = extractFirstJsonObject(stripped);
+      if (!jsonSlice) throw new Error('Could not parse AI response');
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonSlice);
 
       const validTimes = Array.isArray(parsed.times)
         ? parsed.times.filter(tv => /^\d{1,2}:\d{2}$/.test(tv)).sort()
